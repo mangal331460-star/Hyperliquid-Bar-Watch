@@ -1,7 +1,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ExchangeAdapter, ScanTarget } from "../lib/exchanges";
-import { detectThreeBarPattern, PatternAlert } from "../lib/patternDetection";
+import { detectThreeBarPattern, PatternAlert, ALERT_RECENCY_MS, isAlertFresh } from "../lib/patternDetection";
+import { playAlertSound } from "../lib/sound";
 
 export type AssetStatus = "idle" | "scanning" | "error" | "done";
 
@@ -19,7 +20,7 @@ interface ScannerOptions {
   minGapPercent: number;
   intervalMs: number;
   maxAlerts: number;
-  topSymbols: Set<string> | null; // null = no filter (scan all)
+  topSymbols: Set<string> | null;
 }
 
 export function useScanner(options: ScannerOptions) {
@@ -36,11 +37,26 @@ export function useScanner(options: ScannerOptions) {
 
   const stopRef = useRef(false);
   const scanLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const expiryRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Active targets = allTargets filtered by topSymbols
+  // Active targets filtered by market cap
   const targets = topSymbols
     ? allTargets.filter((t) => topSymbols.has(t.baseCoin))
     : allTargets;
+
+  // ── Periodic expiry: remove stale alerts from the feed every minute ──
+  useEffect(() => {
+    if (isRunning) {
+      expiryRef.current = setInterval(() => {
+        setAlerts((prev) => prev.filter(isAlertFresh));
+      }, 60_000);
+    } else {
+      if (expiryRef.current) clearInterval(expiryRef.current);
+    }
+    return () => {
+      if (expiryRef.current) clearInterval(expiryRef.current);
+    };
+  }, [isRunning]);
 
   const loadAssets = useCallback(async () => {
     if (adapters.length === 0) return;
@@ -137,9 +153,19 @@ export function useScanner(options: ScannerOptions) {
       }
 
       if (newAlerts.length > 0) {
-        setAlerts((prev) => [...newAlerts, ...prev].slice(0, maxAlerts));
+        // Play alert sound for each new match
+        playAlertSound();
+
+        setAlerts((prev) => {
+          // Merge new alerts, drop any that have already expired, cap at maxAlerts
+          const merged = [...newAlerts, ...prev].filter(isAlertFresh);
+          return merged.slice(0, maxAlerts);
+        });
         setSeenIds(newSeen);
       }
+
+      // Also purge any expired alerts from the existing list
+      setAlerts((prev) => prev.filter(isAlertFresh));
     },
     [adapters, maxAlerts]
   );
@@ -148,11 +174,13 @@ export function useScanner(options: ScannerOptions) {
     if (targets.length === 0) return;
     stopRef.current = false;
     setIsRunning(true);
+    // Clear previous alerts when a fresh scan starts
+    setAlerts([]);
+    setSeenIds(new Set());
 
     const run = async () => {
       if (stopRef.current) return;
       setScanProgress(0);
-      // Reset idle states for targets in this run
       setAssetStates((prev) => {
         const next = { ...prev };
         for (const t of targets) {
@@ -184,6 +212,7 @@ export function useScanner(options: ScannerOptions) {
     return () => {
       stopRef.current = true;
       if (scanLoopRef.current) clearTimeout(scanLoopRef.current);
+      if (expiryRef.current) clearInterval(expiryRef.current);
     };
   }, []);
 
