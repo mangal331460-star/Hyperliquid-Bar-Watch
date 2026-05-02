@@ -16,6 +16,17 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Artifacts
+
+### Hyperliquid Pattern Scanner (`artifacts/hyperliquid-scanner`)
+- React + Vite app at path `/`
+- Monitors all tradable assets on Hyperliquid using 5-minute candle data
+- Detects the 3-bar gap pattern: bar1.high is well below bar3.low
+- Configurable gap threshold (default 0.1%) and rescan interval
+- In-app browser notifications for pattern alerts
+- Real-time asset scanning grid + alert feed
+- Calls Hyperliquid public API (`https://api.hyperliquid.xyz/info`) directly from browser
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages

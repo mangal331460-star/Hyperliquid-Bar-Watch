@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Hyperliquid Pattern Scanner"
+version = "1.0.0"
+id = "artifacts/hyperliquid-scanner"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18838
+
+[services.development]
+run = "pnpm --filter @workspace/hyperliquid-scanner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/hyperliquid-scanner", "run", "build" ]
+publicDir = "artifacts/hyperliquid-scanner/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18838"
+BASE_PATH = "/"
