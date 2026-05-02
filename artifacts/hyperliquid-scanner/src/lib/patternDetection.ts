@@ -1,9 +1,13 @@
 
-import { Candle } from "./hyperliquid";
+import { NormalizedCandle } from "./exchanges";
 
 export interface PatternAlert {
   id: string;
-  coin: string;
+  symbol: string;
+  exchangeId: string;
+  exchangeName: string;
+  exchangeColor: string;
+  tvSymbol: string;
   detectedAt: number;
   bar1: { open: number; close: number; high: number; low: number; time: number };
   bar2: { open: number; close: number; high: number; low: number; time: number };
@@ -11,47 +15,38 @@ export interface PatternAlert {
   gapPercent: number;
 }
 
-function parse(candle: Candle) {
-  return {
-    open: parseFloat(candle.o),
-    close: parseFloat(candle.c),
-    high: parseFloat(candle.h),
-    low: parseFloat(candle.l),
-    time: candle.t,
-  };
-}
-
 /**
  * Three-bar pattern: bar1.high is "well below" bar3.low.
- * minGapPercent: the minimum required gap between bar1.high and bar3.low, as a percentage.
+ * minGapPercent: minimum gap between bar1.high and bar3.low as a percentage.
  */
 export function detectThreeBarPattern(
-  candles: Candle[],
-  coin: string,
+  candles: NormalizedCandle[],
+  symbol: string,
+  exchangeId: string,
+  exchangeName: string,
+  exchangeColor: string,
+  tvSymbol: string,
   minGapPercent = 0.1
 ): PatternAlert | null {
   if (candles.length < 3) return null;
 
-  // Look at the last 3 completed candles
   const last3 = candles.slice(-3);
-  const bar1 = parse(last3[0]);
-  const bar2 = parse(last3[1]);
-  const bar3 = parse(last3[2]);
+  const bar1 = { open: last3[0].open, close: last3[0].close, high: last3[0].high, low: last3[0].low, time: last3[0].openTime };
+  const bar2 = { open: last3[1].open, close: last3[1].close, high: last3[1].high, low: last3[1].low, time: last3[1].openTime };
+  const bar3 = { open: last3[2].open, close: last3[2].close, high: last3[2].high, low: last3[2].low, time: last3[2].openTime };
 
-  // Core condition: bar3.low > bar1.high (bar3's low is above bar1's high)
   if (bar3.low <= bar1.high) return null;
 
-  // Calculate the gap as a percentage of bar1's high
   const gapPercent = ((bar3.low - bar1.high) / bar1.high) * 100;
-
-  // Apply minimum gap threshold
   if (gapPercent < minGapPercent) return null;
 
-  const id = `${coin}-${bar1.time}-${bar3.time}`;
-
   return {
-    id,
-    coin,
+    id: `${exchangeId}:${symbol}-${bar1.time}-${bar3.time}`,
+    symbol,
+    exchangeId,
+    exchangeName,
+    exchangeColor,
+    tvSymbol,
     detectedAt: Date.now(),
     bar1,
     bar2,

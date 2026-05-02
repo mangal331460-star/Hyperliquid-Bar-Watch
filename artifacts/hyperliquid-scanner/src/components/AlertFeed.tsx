@@ -1,10 +1,11 @@
 
 import { PatternAlert } from "../lib/patternDetection";
-import { Bell, TrendingUp, Clock } from "lucide-react";
+import { Bell, TrendingUp, Clock, BarChart2 } from "lucide-react";
 
 interface AlertFeedProps {
   alerts: PatternAlert[];
   onClear: () => void;
+  onOpenChart: (alert: PatternAlert) => void;
 }
 
 function formatTime(ts: number) {
@@ -17,7 +18,7 @@ function formatPrice(n: number) {
   return n.toFixed(6);
 }
 
-export function AlertFeed({ alerts, onClear }: AlertFeedProps) {
+export function AlertFeed({ alerts, onClear, onOpenChart }: AlertFeedProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
@@ -31,10 +32,7 @@ export function AlertFeed({ alerts, onClear }: AlertFeedProps) {
           )}
         </div>
         {alerts.length > 0 && (
-          <button
-            onClick={onClear}
-            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
+          <button onClick={onClear} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
             Clear all
           </button>
         )}
@@ -51,18 +49,35 @@ export function AlertFeed({ alerts, onClear }: AlertFeedProps) {
           alerts.map((alert) => (
             <div
               key={alert.id}
-              className="bg-emerald-950/40 border border-emerald-500/25 rounded-lg p-3 hover:border-emerald-500/50 transition-colors"
+              className="group bg-emerald-950/40 border border-emerald-500/25 rounded-lg p-3 hover:border-emerald-500/50 transition-colors cursor-pointer"
+              onClick={() => onOpenChart(alert)}
+              title="Click to open chart"
             >
               <div className="flex items-start justify-between mb-2">
-                <div>
-                  <span className="text-emerald-300 font-bold font-mono text-base">{alert.coin}</span>
-                  <span className="ml-2 text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-emerald-300 font-bold font-mono text-base">{alert.symbol}</span>
+                  <span
+                    className="text-xs px-1.5 py-0.5 rounded font-mono font-semibold"
+                    style={{
+                      backgroundColor: `${alert.exchangeColor}22`,
+                      color: alert.exchangeColor,
+                      border: `1px solid ${alert.exchangeColor}44`,
+                    }}
+                  >
+                    {alert.exchangeName}
+                  </span>
+                  <span className="text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">
                     +{alert.gapPercent.toFixed(3)}% gap
                   </span>
                 </div>
-                <div className="flex items-center gap-1 text-zinc-500 text-xs">
-                  <Clock className="w-3 h-3" />
-                  {formatTime(alert.detectedAt)}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-zinc-500 text-xs">
+                    <Clock className="w-3 h-3" />
+                    {formatTime(alert.detectedAt)}
+                  </div>
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <BarChart2 className="w-4 h-4 text-zinc-400" />
+                  </div>
                 </div>
               </div>
 
@@ -88,6 +103,9 @@ export function AlertFeed({ alerts, onClear }: AlertFeedProps) {
                 <span className="text-red-400 font-mono">{formatPrice(alert.bar1.high)}</span>
                 <span className="text-zinc-600 mx-1">→ gap →</span>
                 <span className="text-emerald-400 font-mono">{formatPrice(alert.bar3.low)}</span>
+                <span className="ml-auto text-zinc-600 group-hover:text-zinc-400 transition-colors text-xs">
+                  Click to view chart
+                </span>
               </div>
             </div>
           ))

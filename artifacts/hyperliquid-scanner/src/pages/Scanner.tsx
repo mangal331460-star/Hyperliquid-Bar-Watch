@@ -1,9 +1,17 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useScanner } from "../hooks/useScanner";
 import { AlertFeed } from "../components/AlertFeed";
 import { AssetGrid } from "../components/AssetGrid";
-import { Play, Square, RefreshCw, Settings, Wifi, WifiOff, ChevronDown } from "lucide-react";
+import { ChartModal } from "../components/ChartModal";
+import { PatternAlert } from "../lib/patternDetection";
+import { ExchangeAdapter } from "../lib/exchanges";
+import { hyperliquidAdapter } from "../lib/hyperliquidAdapter";
+import { binanceAdapter } from "../lib/binanceAdapter";
+import { kucoinAdapter } from "../lib/kucoinAdapter";
+import { Play, Square, RefreshCw, Settings, Wifi } from "lucide-react";
+
+const ALL_ADAPTERS: ExchangeAdapter[] = [hyperliquidAdapter, binanceAdapter, kucoinAdapter];
 
 const SCAN_INTERVALS = [
   { label: "1 min", value: 60_000 },
@@ -11,40 +19,54 @@ const SCAN_INTERVALS = [
   { label: "10 min", value: 600_000 },
 ];
 
+interface ChartTarget {
+  tvSymbol: string;
+  displayName: string;
+  exchangeName: string;
+  exchangeColor: string;
+}
+
 export default function Scanner() {
   const [minGapPercent, setMinGapPercent] = useState(0.1);
   const [intervalMs, setIntervalMs] = useState(300_000);
   const [showSettings, setShowSettings] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [prevAlertCount, setPrevAlertCount] = useState(0);
+  const [activeExchangeIds, setActiveExchangeIds] = useState<Set<string>>(
+    new Set(["hyperliquid"])
+  );
+  const [chartTarget, setChartTarget] = useState<ChartTarget | null>(null);
+
+  const adapters = useMemo(
+    () => ALL_ADAPTERS.filter((a) => activeExchangeIds.has(a.id)),
+    [activeExchangeIds]
+  );
 
   const {
     isRunning,
-    assets,
+    targets,
     assetStates,
     alerts,
     scanProgress,
     loadingAssets,
-    error,
+    errors,
     loadAssets,
     startScanning,
     stopScanning,
     clearAlerts,
-  } = useScanner({ minGapPercent, intervalMs, maxAlerts: 200 });
+  } = useScanner({ adapters, minGapPercent, intervalMs, maxAlerts: 200 });
 
-  // Load assets on mount
   useEffect(() => {
-    loadAssets();
-  }, [loadAssets]);
+    if (adapters.length > 0) loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adapters]);
 
   // Browser notifications
   useEffect(() => {
     if (alerts.length > prevAlertCount && notificationsEnabled) {
-      const newAlerts = alerts.slice(0, alerts.length - prevAlertCount);
-      newAlerts.forEach((a) => {
-        new Notification(`Pattern on ${a.coin}`, {
-          body: `3-bar gap: +${a.gapPercent.toFixed(3)}% | Bar1 H: ${a.bar1.high.toFixed(4)} → Bar3 L: ${a.bar3.low.toFixed(4)}`,
-          icon: "/favicon.ico",
+      alerts.slice(0, alerts.length - prevAlertCount).forEach((a) => {
+        new Notification(`Pattern on ${a.symbol} (${a.exchangeName})`, {
+          body: `3-bar gap: +${a.gapPercent.toFixed(3)}% | Bar1 H: ${a.bar1.high} → Bar3 L: ${a.bar3.low}`,
         });
       });
     }
@@ -58,30 +80,95 @@ export default function Scanner() {
     }
   };
 
-  const nextScanCountdown = isRunning ? intervalMs / 1000 : null;
+  const toggleExchange = (id: string) => {
+    setActiveExchangeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        if (next.size > 1) next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const openChart = useCallback(
+    (
+      symbol: string,
+      exchangeId: string,
+      exchangeName: string,
+      exchangeColor: string,
+      tvSymbolOverride?: string
+    ) => {
+      const adapter = ALL_ADAPTERS.find((a) => a.id === exchangeId);
+      const tvSymbol = tvSymbolOverride ?? adapter?.getTVSymbol(symbol) ?? symbol;
+      setChartTarget({ tvSymbol, displayName: symbol, exchangeName, exchangeColor });
+    },
+    []
+  );
+
+  const openChartFromAlert = useCallback((alert: PatternAlert) => {
+    setChartTarget({
+      tvSymbol: alert.tvSymbol,
+      displayName: alert.symbol,
+      exchangeName: alert.exchangeName,
+      exchangeColor: alert.exchangeColor,
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#0a0b0e] text-zinc-200 flex flex-col">
       {/* Header */}
-      <header className="border-b border-zinc-800/80 px-6 py-3 flex items-center justify-between">
+      <header className="border-b border-zinc-800/80 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]" />
-          <span className="font-bold text-white tracking-tight text-lg">Hyperliquid Scanner</span>
-          <span className="text-xs text-zinc-600 font-mono">5m chart · 3-bar gap</span>
+          <span className="font-bold text-white tracking-tight">Hyperliquid Scanner</span>
+          <span className="text-xs text-zinc-600 font-mono hidden sm:inline">5m · 3-bar gap</span>
         </div>
+
+        {/* Exchange Toggles */}
+        <div className="flex items-center gap-1.5">
+          {ALL_ADAPTERS.map((a) => {
+            const active = activeExchangeIds.has(a.id);
+            return (
+              <button
+                key={a.id}
+                onClick={() => toggleExchange(a.id)}
+                disabled={isRunning}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style={
+                  active
+                    ? {
+                        backgroundColor: `${a.color}22`,
+                        color: a.color,
+                        borderColor: `${a.color}55`,
+                      }
+                    : { backgroundColor: "transparent", color: "#52525b", borderColor: "#3f3f46" }
+                }
+              >
+                <div
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: active ? a.color : "#52525b" }}
+                />
+                {a.name}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="flex items-center gap-2">
           {!notificationsEnabled && (
             <button
               onClick={requestNotifications}
-              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors border border-zinc-700 rounded px-2 py-1"
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors border border-zinc-700 rounded px-2 py-1 hidden sm:flex"
             >
-              Enable notifications
+              Enable alerts
             </button>
           )}
           {notificationsEnabled && (
             <div className="flex items-center gap-1.5 text-xs text-emerald-500">
               <Wifi className="w-3 h-3" />
-              Notifications on
+              <span className="hidden sm:inline">Alerts on</span>
             </div>
           )}
           <button
@@ -97,7 +184,7 @@ export default function Scanner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="border-b border-zinc-800/80 bg-zinc-900/50 px-6 py-4">
+        <div className="border-b border-zinc-800/80 bg-zinc-900/50 px-4 py-3">
           <div className="flex flex-wrap gap-6 items-end">
             <div>
               <label className="block text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">Min Gap %</label>
@@ -113,7 +200,7 @@ export default function Scanner() {
                 />
                 <span className="text-zinc-500 text-sm">%</span>
               </div>
-              <p className="text-xs text-zinc-600 mt-1">Gap between bar1 high and bar3 low</p>
+              <p className="text-xs text-zinc-600 mt-1">Gap between bar1 high → bar3 low</p>
             </div>
             <div>
               <label className="block text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">Rescan Interval</label>
@@ -138,19 +225,22 @@ export default function Scanner() {
       )}
 
       {/* Status Bar */}
-      <div className="px-6 py-2 bg-zinc-900/30 border-b border-zinc-800/50 flex items-center gap-4 text-xs font-mono">
+      <div className="px-4 py-1.5 bg-zinc-900/30 border-b border-zinc-800/50 flex items-center gap-4 text-xs font-mono flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500">Assets:</span>
-          <span className="text-white">{assets.length}</span>
+          <span className="text-white">{targets.length}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500">Alerts:</span>
           <span className="text-emerald-400">{alerts.length}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-zinc-500">Gap threshold:</span>
+          <span className="text-zinc-500">Gap ≥</span>
           <span className="text-white">{minGapPercent}%</span>
         </div>
+        {errors.length > 0 && (
+          <div className="text-red-400">{errors.join(" · ")}</div>
+        )}
         {isRunning && (
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -162,25 +252,17 @@ export default function Scanner() {
         )}
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="mx-4 mt-4 bg-red-950/50 border border-red-500/30 rounded-lg px-4 py-3 text-sm text-red-400 flex items-center gap-2">
-          <WifiOff className="w-4 h-4 flex-shrink-0" />
-          {error}
-        </div>
-      )}
-
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Controls + Asset Grid */}
-        <div className="w-72 border-r border-zinc-800/80 flex flex-col">
+        {/* Left Sidebar */}
+        <div className="w-64 border-r border-zinc-800/80 flex flex-col flex-shrink-0">
           {/* Controls */}
-          <div className="p-4 border-b border-zinc-800/50">
+          <div className="p-3 border-b border-zinc-800/50">
             <div className="flex gap-2">
               {!isRunning ? (
                 <button
                   onClick={startScanning}
-                  disabled={assets.length === 0 || loadingAssets}
+                  disabled={targets.length === 0 || loadingAssets}
                   className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded transition-colors text-sm"
                 >
                   <Play className="w-4 h-4" />
@@ -207,20 +289,36 @@ export default function Scanner() {
           </div>
 
           {/* Asset Grid */}
-          <div className="flex-1 overflow-hidden p-4">
+          <div className="flex-1 overflow-hidden p-3">
             <AssetGrid
               assetStates={assetStates}
-              totalAssets={assets.length}
+              totalAssets={targets.length}
               scanProgress={scanProgress}
+              onOpenChart={openChart}
             />
           </div>
         </div>
 
-        {/* Right: Alert Feed */}
+        {/* Alert Feed */}
         <div className="flex-1 p-4 overflow-hidden">
-          <AlertFeed alerts={alerts} onClear={clearAlerts} />
+          <AlertFeed
+            alerts={alerts}
+            onClear={clearAlerts}
+            onOpenChart={openChartFromAlert}
+          />
         </div>
       </div>
+
+      {/* Chart Modal */}
+      {chartTarget && (
+        <ChartModal
+          tvSymbol={chartTarget.tvSymbol}
+          displayName={chartTarget.displayName}
+          exchangeName={chartTarget.exchangeName}
+          exchangeColor={chartTarget.exchangeColor}
+          onClose={() => setChartTarget(null)}
+        />
+      )}
     </div>
   );
 }
