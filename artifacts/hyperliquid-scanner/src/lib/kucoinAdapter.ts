@@ -59,4 +59,9 @@ export const kucoinAdapter: ExchangeAdapter = {
   getTVSymbol(symbol: string): string {
     return `KUCOIN:${symbol.replace("-", "")}`;
   },
+
+  getBaseCoin(symbol: string): string {
+    // BTC-USDT → BTC
+    return symbol.split("-")[0].toUpperCase();
+  },
 };

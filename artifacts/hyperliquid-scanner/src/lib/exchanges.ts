@@ -16,6 +16,8 @@ export interface ExchangeAdapter {
   fetchAssets(): Promise<string[]>;
   fetchRecentCandles(symbol: string, count?: number): Promise<NormalizedCandle[]>;
   getTVSymbol(symbol: string): string;
+  /** Extract the base coin symbol (e.g. "BTC") from an exchange symbol for market cap filtering */
+  getBaseCoin(symbol: string): string;
 }
 
 export interface ScanTarget {
@@ -24,4 +26,5 @@ export interface ScanTarget {
   exchangeName: string;
   exchangeColor: string;
   tvSymbol: string;
+  baseCoin: string;
 }

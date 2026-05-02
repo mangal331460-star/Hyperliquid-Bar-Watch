@@ -47,4 +47,8 @@ export const hyperliquidAdapter: ExchangeAdapter = {
   getTVSymbol(symbol: string): string {
     return `BINANCE:${symbol}USDT.P`;
   },
+
+  getBaseCoin(symbol: string): string {
+    return symbol.toUpperCase();
+  },
 };

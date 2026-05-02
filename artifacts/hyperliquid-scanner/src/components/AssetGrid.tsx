@@ -6,7 +6,8 @@ interface AssetGridProps {
   assetStates: Record<string, AssetState>;
   totalAssets: number;
   scanProgress: number;
-  onOpenChart?: (symbol: string, exchangeId: string, exchangeName: string, exchangeColor: string, tvSymbol?: string) => void;
+  onOpenChart?: (symbol: string, exchangeId: string, exchangeName: string, exchangeColor: string) => void;
+  topSymbols: Set<string> | null;
 }
 
 function StatusIcon({ status }: { status: AssetState["status"] }) {
@@ -22,12 +23,17 @@ function StatusIcon({ status }: { status: AssetState["status"] }) {
   }
 }
 
-export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart }: AssetGridProps) {
-  const states = Object.values(assetStates);
+export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart, topSymbols }: AssetGridProps) {
+  const allStates = Object.values(assetStates);
+
+  // When a market cap filter is active, only show matching assets in the grid
+  const states = topSymbols
+    ? allStates.filter((s) => topSymbols.has(s.symbol.replace(/USDT$/, "").replace(/-USDT$/, "").toUpperCase()))
+    : allStates;
+
   const scanned = states.filter((s) => s.status === "done" || s.status === "error").length;
   const errors = states.filter((s) => s.status === "error").length;
 
-  // Group by exchange
   const byExchange = states.reduce<Record<string, AssetState[]>>((acc, s) => {
     acc[s.exchangeId] = acc[s.exchangeId] ?? [];
     acc[s.exchangeId].push(s);
@@ -38,7 +44,7 @@ export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart 
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-semibold text-zinc-400 uppercase tracking-widest">Assets</span>
-        <div className="flex items-center gap-3 text-xs font-mono text-zinc-500">
+        <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
           <span>{scanned}/{totalAssets}</span>
           {errors > 0 && <span className="text-red-400">{errors} err</span>}
         </div>
@@ -57,29 +63,29 @@ export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart 
 
       <div className="flex-1 overflow-y-auto space-y-3">
         {states.length === 0 ? (
-          <div className="text-sm text-zinc-600 text-center mt-4">No assets loaded</div>
+          <div className="text-sm text-zinc-600 text-center mt-4">
+            {topSymbols ? "No matching top coins found" : "No assets loaded"}
+          </div>
         ) : (
           Object.entries(byExchange).map(([exchangeId, exchangeStates]) => {
             const first = exchangeStates[0];
+            const doneCount = exchangeStates.filter((s) => s.status === "done" || s.status === "error").length;
             return (
               <div key={exchangeId}>
                 <div className="flex items-center gap-1.5 mb-1.5">
-                  <div
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ backgroundColor: first.exchangeColor }}
-                  />
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: first.exchangeColor }} />
                   <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: first.exchangeColor }}>
                     {first.exchangeName}
                   </span>
                   <span className="text-xs text-zinc-600 font-mono ml-auto">
-                    {exchangeStates.filter(s => s.status === "done" || s.status === "error").length}/{exchangeStates.length}
+                    {doneCount}/{exchangeStates.length}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-0.5">
                   {exchangeStates.map((asset) => (
                     <div
                       key={`${asset.exchangeId}:${asset.symbol}`}
-                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-mono transition-colors cursor-default ${
+                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-mono transition-colors ${
                         asset.status === "scanning"
                           ? "bg-blue-950/30 border border-blue-500/20"
                           : asset.status === "done"
@@ -87,7 +93,7 @@ export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart 
                           : asset.status === "error"
                           ? "bg-red-950/20 border border-red-500/15"
                           : "border border-transparent"
-                      } ${onOpenChart ? "cursor-pointer" : ""}`}
+                      } ${onOpenChart ? "cursor-pointer" : "cursor-default"}`}
                       onClick={() => onOpenChart?.(asset.symbol, asset.exchangeId, asset.exchangeName, asset.exchangeColor)}
                       title={onOpenChart ? `Open ${asset.symbol} chart` : undefined}
                     >
@@ -98,7 +104,7 @@ export function AssetGrid({ assetStates, totalAssets, scanProgress, onOpenChart 
                         asset.status === "error" ? "text-red-400" :
                         "text-zinc-600"
                       }>
-                        {asset.symbol.replace("-USDT", "").replace("USDT", "")}
+                        {asset.symbol.replace(/-?USDT$/, "")}
                       </span>
                     </div>
                   ))}

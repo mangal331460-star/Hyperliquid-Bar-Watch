@@ -19,13 +19,14 @@ interface ScannerOptions {
   minGapPercent: number;
   intervalMs: number;
   maxAlerts: number;
+  topSymbols: Set<string> | null; // null = no filter (scan all)
 }
 
 export function useScanner(options: ScannerOptions) {
-  const { adapters, minGapPercent, intervalMs, maxAlerts } = options;
+  const { adapters, minGapPercent, intervalMs, maxAlerts, topSymbols } = options;
 
   const [isRunning, setIsRunning] = useState(false);
-  const [targets, setTargets] = useState<ScanTarget[]>([]);
+  const [allTargets, setAllTargets] = useState<ScanTarget[]>([]);
   const [assetStates, setAssetStates] = useState<Record<string, AssetState>>({});
   const [alerts, setAlerts] = useState<PatternAlert[]>([]);
   const [scanProgress, setScanProgress] = useState(0);
@@ -36,33 +37,39 @@ export function useScanner(options: ScannerOptions) {
   const stopRef = useRef(false);
   const scanLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Active targets = allTargets filtered by topSymbols
+  const targets = topSymbols
+    ? allTargets.filter((t) => topSymbols.has(t.baseCoin))
+    : allTargets;
+
   const loadAssets = useCallback(async () => {
     if (adapters.length === 0) return;
     setLoadingAssets(true);
     setErrors([]);
-    const allTargets: ScanTarget[] = [];
+    const collected: ScanTarget[] = [];
     const errs: string[] = [];
 
     for (const adapter of adapters) {
       try {
         const symbols = await adapter.fetchAssets();
         for (const symbol of symbols) {
-          allTargets.push({
+          collected.push({
             symbol,
             exchangeId: adapter.id,
             exchangeName: adapter.name,
             exchangeColor: adapter.color,
             tvSymbol: adapter.getTVSymbol(symbol),
+            baseCoin: adapter.getBaseCoin(symbol),
           });
         }
-      } catch (e) {
+      } catch {
         errs.push(`Failed to load ${adapter.name} assets`);
       }
     }
 
-    setTargets(allTargets);
+    setAllTargets(collected);
     const initial: Record<string, AssetState> = {};
-    for (const t of allTargets) {
+    for (const t of collected) {
       const key = `${t.exchangeId}:${t.symbol}`;
       initial[key] = {
         symbol: t.symbol,
@@ -82,8 +89,6 @@ export function useScanner(options: ScannerOptions) {
     async (targetList: ScanTarget[], gapPct: number, seen: Set<string>) => {
       const newAlerts: PatternAlert[] = [];
       const newSeen = new Set(seen);
-
-      // Group by exchange so we can find the right adapter
       const adapterMap = new Map(adapters.map((a) => [a.id, a]));
 
       for (let i = 0; i < targetList.length; i++) {
@@ -147,6 +152,15 @@ export function useScanner(options: ScannerOptions) {
     const run = async () => {
       if (stopRef.current) return;
       setScanProgress(0);
+      // Reset idle states for targets in this run
+      setAssetStates((prev) => {
+        const next = { ...prev };
+        for (const t of targets) {
+          const key = `${t.exchangeId}:${t.symbol}`;
+          if (next[key]) next[key] = { ...next[key], status: "idle" };
+        }
+        return next;
+      });
       await scanAll(targets, minGapPercent, seenIds);
       if (!stopRef.current) {
         scanLoopRef.current = setTimeout(run, intervalMs);
@@ -176,6 +190,7 @@ export function useScanner(options: ScannerOptions) {
   return {
     isRunning,
     targets,
+    totalLoaded: allTargets.length,
     assetStates,
     alerts,
     scanProgress,

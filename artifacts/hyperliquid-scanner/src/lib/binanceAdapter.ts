@@ -58,4 +58,9 @@ export const binanceAdapter: ExchangeAdapter = {
   getTVSymbol(symbol: string): string {
     return `BINANCE:${symbol}`;
   },
+
+  getBaseCoin(symbol: string): string {
+    // BTCUSDT → BTC
+    return symbol.replace(/USDT$/, "").toUpperCase();
+  },
 };

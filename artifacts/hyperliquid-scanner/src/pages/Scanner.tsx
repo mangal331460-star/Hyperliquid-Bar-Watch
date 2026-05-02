@@ -9,7 +9,8 @@ import { ExchangeAdapter } from "../lib/exchanges";
 import { hyperliquidAdapter } from "../lib/hyperliquidAdapter";
 import { binanceAdapter } from "../lib/binanceAdapter";
 import { kucoinAdapter } from "../lib/kucoinAdapter";
-import { Play, Square, RefreshCw, Settings, Wifi } from "lucide-react";
+import { fetchTopSymbols } from "../lib/marketCap";
+import { Play, Square, RefreshCw, Settings, Wifi, TrendingUp, Loader2 } from "lucide-react";
 
 const ALL_ADAPTERS: ExchangeAdapter[] = [hyperliquidAdapter, binanceAdapter, kucoinAdapter];
 
@@ -17,6 +18,13 @@ const SCAN_INTERVALS = [
   { label: "1 min", value: 60_000 },
   { label: "5 min", value: 300_000 },
   { label: "10 min", value: 600_000 },
+];
+
+const MC_LIMITS: { label: string; value: number | null }[] = [
+  { label: "All", value: null },
+  { label: "Top 100", value: 100 },
+  { label: "Top 200", value: 200 },
+  { label: "Top 300", value: 300 },
 ];
 
 interface ChartTarget {
@@ -36,6 +44,10 @@ export default function Scanner() {
     new Set(["hyperliquid"])
   );
   const [chartTarget, setChartTarget] = useState<ChartTarget | null>(null);
+  const [mcLimit, setMcLimit] = useState<number | null>(null);
+  const [topSymbols, setTopSymbols] = useState<Set<string> | null>(null);
+  const [loadingMc, setLoadingMc] = useState(false);
+  const [mcError, setMcError] = useState<string | null>(null);
 
   const adapters = useMemo(
     () => ALL_ADAPTERS.filter((a) => activeExchangeIds.has(a.id)),
@@ -45,6 +57,7 @@ export default function Scanner() {
   const {
     isRunning,
     targets,
+    totalLoaded,
     assetStates,
     alerts,
     scanProgress,
@@ -54,12 +67,27 @@ export default function Scanner() {
     startScanning,
     stopScanning,
     clearAlerts,
-  } = useScanner({ adapters, minGapPercent, intervalMs, maxAlerts: 200 });
+  } = useScanner({ adapters, minGapPercent, intervalMs, maxAlerts: 200, topSymbols });
 
   useEffect(() => {
     if (adapters.length > 0) loadAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapters]);
+
+  // Fetch top symbols whenever mcLimit changes
+  useEffect(() => {
+    if (mcLimit === null) {
+      setTopSymbols(null);
+      setMcError(null);
+      return;
+    }
+    setLoadingMc(true);
+    setMcError(null);
+    fetchTopSymbols(mcLimit)
+      .then((syms) => setTopSymbols(syms))
+      .catch(() => setMcError("CoinGecko fetch failed — showing all coins"))
+      .finally(() => setLoadingMc(false));
+  }, [mcLimit]);
 
   // Browser notifications
   useEffect(() => {
@@ -81,6 +109,7 @@ export default function Scanner() {
   };
 
   const toggleExchange = (id: string) => {
+    if (isRunning) return;
     setActiveExchangeIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -93,15 +122,9 @@ export default function Scanner() {
   };
 
   const openChart = useCallback(
-    (
-      symbol: string,
-      exchangeId: string,
-      exchangeName: string,
-      exchangeColor: string,
-      tvSymbolOverride?: string
-    ) => {
+    (symbol: string, exchangeId: string, exchangeName: string, exchangeColor: string) => {
       const adapter = ALL_ADAPTERS.find((a) => a.id === exchangeId);
-      const tvSymbol = tvSymbolOverride ?? adapter?.getTVSymbol(symbol) ?? symbol;
+      const tvSymbol = adapter?.getTVSymbol(symbol) ?? symbol;
       setChartTarget({ tvSymbol, displayName: symbol, exchangeName, exchangeColor });
     },
     []
@@ -115,6 +138,9 @@ export default function Scanner() {
       exchangeColor: alert.exchangeColor,
     });
   }, []);
+
+  const filteredCount = targets.length;
+  const isFiltered = mcLimit !== null && topSymbols !== null;
 
   return (
     <div className="min-h-screen bg-[#0a0b0e] text-zinc-200 flex flex-col">
@@ -138,18 +164,11 @@ export default function Scanner() {
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={
                   active
-                    ? {
-                        backgroundColor: `${a.color}22`,
-                        color: a.color,
-                        borderColor: `${a.color}55`,
-                      }
+                    ? { backgroundColor: `${a.color}22`, color: a.color, borderColor: `${a.color}55` }
                     : { backgroundColor: "transparent", color: "#52525b", borderColor: "#3f3f46" }
                 }
               >
-                <div
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ backgroundColor: active ? a.color : "#52525b" }}
-                />
+                <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: active ? a.color : "#52525b" }} />
                 {a.name}
               </button>
             );
@@ -185,7 +204,7 @@ export default function Scanner() {
       {/* Settings Panel */}
       {showSettings && (
         <div className="border-b border-zinc-800/80 bg-zinc-900/50 px-4 py-3">
-          <div className="flex flex-wrap gap-6 items-end">
+          <div className="flex flex-wrap gap-6 items-start">
             <div>
               <label className="block text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">Min Gap %</label>
               <div className="flex items-center gap-2">
@@ -202,6 +221,7 @@ export default function Scanner() {
               </div>
               <p className="text-xs text-zinc-600 mt-1">Gap between bar1 high → bar3 low</p>
             </div>
+
             <div>
               <label className="block text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">Rescan Interval</label>
               <div className="flex gap-1">
@@ -220,6 +240,44 @@ export default function Scanner() {
                 ))}
               </div>
             </div>
+
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1.5 uppercase tracking-wider flex items-center gap-1.5">
+                <TrendingUp className="w-3 h-3" />
+                Scan by Market Cap
+              </label>
+              <div className="flex gap-1">
+                {MC_LIMITS.map((opt) => (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => setMcLimit(opt.value)}
+                    disabled={isRunning || loadingMc}
+                    className={`px-3 py-1.5 rounded text-sm font-mono transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                      mcLimit === opt.value
+                        ? "bg-violet-600 text-white"
+                        : "bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {loadingMc && (
+                <p className="text-xs text-zinc-500 mt-1 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Fetching market cap data…
+                </p>
+              )}
+              {mcError && <p className="text-xs text-red-400 mt-1">{mcError}</p>}
+              {isFiltered && !loadingMc && (
+                <p className="text-xs text-violet-400 mt-1">
+                  Filtered to top {mcLimit} coins · {filteredCount} of {totalLoaded} assets match
+                </p>
+              )}
+              {!isFiltered && !loadingMc && mcLimit === null && (
+                <p className="text-xs text-zinc-600 mt-1">Scanning all listed assets</p>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -227,8 +285,11 @@ export default function Scanner() {
       {/* Status Bar */}
       <div className="px-4 py-1.5 bg-zinc-900/30 border-b border-zinc-800/50 flex items-center gap-4 text-xs font-mono flex-wrap">
         <div className="flex items-center gap-1.5">
-          <span className="text-zinc-500">Assets:</span>
-          <span className="text-white">{targets.length}</span>
+          <span className="text-zinc-500">Scanning:</span>
+          <span className="text-white font-semibold">{filteredCount}</span>
+          {isFiltered && (
+            <span className="text-violet-400">/ {totalLoaded} (top {mcLimit})</span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500">Alerts:</span>
@@ -238,9 +299,13 @@ export default function Scanner() {
           <span className="text-zinc-500">Gap ≥</span>
           <span className="text-white">{minGapPercent}%</span>
         </div>
-        {errors.length > 0 && (
-          <div className="text-red-400">{errors.join(" · ")}</div>
+        {loadingMc && (
+          <div className="flex items-center gap-1 text-violet-400">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Loading market cap…
+          </div>
         )}
+        {errors.length > 0 && <div className="text-red-400">{errors.join(" · ")}</div>}
         {isRunning && (
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -256,17 +321,19 @@ export default function Scanner() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar */}
         <div className="w-64 border-r border-zinc-800/80 flex flex-col flex-shrink-0">
-          {/* Controls */}
           <div className="p-3 border-b border-zinc-800/50">
             <div className="flex gap-2">
               {!isRunning ? (
                 <button
                   onClick={startScanning}
-                  disabled={targets.length === 0 || loadingAssets}
+                  disabled={filteredCount === 0 || loadingAssets || loadingMc}
                   className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded transition-colors text-sm"
                 >
                   <Play className="w-4 h-4" />
                   Start Scan
+                  {isFiltered && (
+                    <span className="text-emerald-200 font-normal text-xs">({filteredCount})</span>
+                  )}
                 </button>
               ) : (
                 <button
@@ -288,24 +355,20 @@ export default function Scanner() {
             </div>
           </div>
 
-          {/* Asset Grid */}
           <div className="flex-1 overflow-hidden p-3">
             <AssetGrid
               assetStates={assetStates}
-              totalAssets={targets.length}
+              totalAssets={filteredCount}
               scanProgress={scanProgress}
               onOpenChart={openChart}
+              topSymbols={topSymbols}
             />
           </div>
         </div>
 
         {/* Alert Feed */}
         <div className="flex-1 p-4 overflow-hidden">
-          <AlertFeed
-            alerts={alerts}
-            onClear={clearAlerts}
-            onOpenChart={openChartFromAlert}
-          />
+          <AlertFeed alerts={alerts} onClear={clearAlerts} onOpenChart={openChartFromAlert} />
         </div>
       </div>
 
