@@ -23,21 +23,26 @@ interface ScannerOptions {
   topSymbols: Set<string> | null;
 }
 
+export type ScanPhase = "idle" | "scanning" | "waiting";
+
 export function useScanner(options: ScannerOptions) {
   const { adapters, minGapPercent, intervalMs, maxAlerts, topSymbols } = options;
 
   const [isRunning, setIsRunning] = useState(false);
+  const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
+  const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [allTargets, setAllTargets] = useState<ScanTarget[]>([]);
   const [assetStates, setAssetStates] = useState<Record<string, AssetState>>({});
   const [alerts, setAlerts] = useState<PatternAlert[]>([]);
   const [scanProgress, setScanProgress] = useState(0);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
 
   const stopRef = useRef(false);
   const scanLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const expiryRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Use a ref so the loop always reads the latest seen set without stale closures
+  const seenIdsRef = useRef<Set<string>>(new Set());
 
   // Active targets filtered by market cap
   const targets = topSymbols
@@ -102,9 +107,8 @@ export function useScanner(options: ScannerOptions) {
   }, [adapters]);
 
   const scanAll = useCallback(
-    async (targetList: ScanTarget[], gapPct: number, seen: Set<string>) => {
+    async (targetList: ScanTarget[], gapPct: number) => {
       const newAlerts: PatternAlert[] = [];
-      const newSeen = new Set(seen);
       const adapterMap = new Map(adapters.map((a) => [a.id, a]));
 
       for (let i = 0; i < targetList.length; i++) {
@@ -132,8 +136,9 @@ export function useScanner(options: ScannerOptions) {
             gapPct
           );
 
-          if (alert && !newSeen.has(alert.id)) {
-            newSeen.add(alert.id);
+          // Use ref so we always check against the latest seen set
+          if (alert && !seenIdsRef.current.has(alert.id)) {
+            seenIdsRef.current.add(alert.id);
             newAlerts.push(alert);
           }
 
@@ -153,18 +158,14 @@ export function useScanner(options: ScannerOptions) {
       }
 
       if (newAlerts.length > 0) {
-        // Play alert sound for each new match
         playAlertSound();
-
         setAlerts((prev) => {
-          // Merge new alerts, drop any that have already expired, cap at maxAlerts
           const merged = [...newAlerts, ...prev].filter(isAlertFresh);
           return merged.slice(0, maxAlerts);
         });
-        setSeenIds(newSeen);
       }
 
-      // Also purge any expired alerts from the existing list
+      // Purge expired alerts
       setAlerts((prev) => prev.filter(isAlertFresh));
     },
     [adapters, maxAlerts]
@@ -173,13 +174,16 @@ export function useScanner(options: ScannerOptions) {
   const startScanning = useCallback(() => {
     if (targets.length === 0) return;
     stopRef.current = false;
+    seenIdsRef.current = new Set();
     setIsRunning(true);
-    // Clear previous alerts when a fresh scan starts
+    setScanPhase("scanning");
+    setNextScanAt(null);
     setAlerts([]);
-    setSeenIds(new Set());
 
     const run = async () => {
       if (stopRef.current) return;
+      setScanPhase("scanning");
+      setNextScanAt(null);
       setScanProgress(0);
       setAssetStates((prev) => {
         const next = { ...prev };
@@ -189,23 +193,31 @@ export function useScanner(options: ScannerOptions) {
         }
         return next;
       });
-      await scanAll(targets, minGapPercent, seenIds);
+
+      await scanAll(targets, minGapPercent);
+
       if (!stopRef.current) {
+        const next = Date.now() + intervalMs;
+        setNextScanAt(next);
+        setScanPhase("waiting");
         scanLoopRef.current = setTimeout(run, intervalMs);
       }
     };
+
     run();
-  }, [targets, minGapPercent, intervalMs, scanAll, seenIds]);
+  }, [targets, minGapPercent, intervalMs, scanAll]);
 
   const stopScanning = useCallback(() => {
     stopRef.current = true;
     setIsRunning(false);
+    setScanPhase("idle");
+    setNextScanAt(null);
     if (scanLoopRef.current) clearTimeout(scanLoopRef.current);
   }, []);
 
   const clearAlerts = useCallback(() => {
     setAlerts([]);
-    setSeenIds(new Set());
+    seenIdsRef.current = new Set();
   }, []);
 
   useEffect(() => {
@@ -218,6 +230,8 @@ export function useScanner(options: ScannerOptions) {
 
   return {
     isRunning,
+    scanPhase,
+    nextScanAt,
     targets,
     totalLoaded: allTargets.length,
     assetStates,

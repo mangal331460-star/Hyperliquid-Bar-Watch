@@ -10,7 +10,21 @@ import { hyperliquidAdapter } from "../lib/hyperliquidAdapter";
 import { binanceAdapter } from "../lib/binanceAdapter";
 import { kucoinAdapter } from "../lib/kucoinAdapter";
 import { fetchTopSymbols } from "../lib/marketCap";
-import { Play, Square, RefreshCw, Settings, Wifi, Loader2 } from "lucide-react";
+import { Play, Square, RefreshCw, Settings, Wifi, Loader2, Radio, Clock } from "lucide-react";
+
+function useCountdown(nextScanAt: number | null): string {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (nextScanAt === null) return;
+    const id = setInterval(() => tick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [nextScanAt]);
+  if (nextScanAt === null) return "";
+  const remaining = Math.max(0, nextScanAt - Date.now());
+  const m = Math.floor(remaining / 60_000);
+  const s = Math.floor((remaining % 60_000) / 1000);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 const ALL_ADAPTERS: ExchangeAdapter[] = [hyperliquidAdapter, binanceAdapter, kucoinAdapter];
 
@@ -56,6 +70,8 @@ export default function Scanner() {
 
   const {
     isRunning,
+    scanPhase,
+    nextScanAt,
     targets,
     totalLoaded,
     assetStates,
@@ -68,6 +84,8 @@ export default function Scanner() {
     stopScanning,
     clearAlerts,
   } = useScanner({ adapters, minGapPercent, intervalMs, maxAlerts: 200, topSymbols });
+
+  const countdown = useCountdown(nextScanAt);
 
   useEffect(() => {
     if (adapters.length > 0) loadAssets();
@@ -299,7 +317,7 @@ export default function Scanner() {
       {/* ── Status Bar ── */}
       <div className="px-4 py-1.5 bg-zinc-900/20 border-b border-zinc-800/50 flex items-center gap-4 text-xs font-mono flex-wrap">
         <div className="flex items-center gap-1.5">
-          <span className="text-zinc-500">Scanning:</span>
+          <span className="text-zinc-500">Assets:</span>
           <span className="text-white font-semibold">{filteredCount}</span>
           {isFiltered && <span className="text-violet-400 font-semibold">top {mcLimit}</span>}
         </div>
@@ -312,15 +330,32 @@ export default function Scanner() {
           <span className="text-white">{minGapPercent}%</span>
         </div>
         {errors.length > 0 && <div className="text-red-400">{errors.join(" · ")}</div>}
-        {isRunning && (
-          <div className="flex items-center gap-1.5 ml-auto">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-emerald-400">Scanning</span>
-            {scanProgress > 0 && scanProgress < 100 && (
-              <span className="text-zinc-500">({scanProgress}%)</span>
-            )}
-          </div>
-        )}
+
+        <div className="ml-auto flex items-center gap-3">
+          {scanPhase === "scanning" && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-emerald-400">Scanning</span>
+              {scanProgress > 0 && scanProgress < 100 && (
+                <span className="text-zinc-500">{scanProgress}%</span>
+              )}
+            </div>
+          )}
+          {scanPhase === "waiting" && (
+            <div className="flex items-center gap-1.5 text-sky-400">
+              <Radio className="w-3 h-3 animate-pulse" />
+              <span>Monitoring</span>
+              <span className="text-zinc-400">· next scan in</span>
+              <span className="text-white font-semibold tabular-nums">{countdown}</span>
+            </div>
+          )}
+          {scanPhase === "idle" && !isRunning && (
+            <div className="flex items-center gap-1.5 text-zinc-600">
+              <Clock className="w-3 h-3" />
+              <span>Idle — click Start Scan to begin</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Main Content ── */}
