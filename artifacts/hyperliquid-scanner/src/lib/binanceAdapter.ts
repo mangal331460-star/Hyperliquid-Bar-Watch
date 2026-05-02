@@ -1,7 +1,22 @@
 
 import { ExchangeAdapter, NormalizedCandle } from "./exchanges";
 
-const BASE = "https://api.binance.com/api/v3";
+// Using Binance's public data mirror — no geo-restrictions unlike api.binance.com
+const BASE = "https://data-api.binance.vision/api/v3";
+
+// Leverage tokens and non-standard suffixes to exclude
+const EXCLUDE = ["DOWNUSDT", "UPUSDT", "BULLUSDT", "BEARUSDT", "HEDGEUSDT"];
+
+async function fetchWithTimeout(url: string, timeoutMs = 10_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export const binanceAdapter: ExchangeAdapter = {
   id: "binance",
@@ -9,21 +24,24 @@ export const binanceAdapter: ExchangeAdapter = {
   color: "#f0b90b",
 
   async fetchAssets(): Promise<string[]> {
-    const res = await fetch(`${BASE}/exchangeInfo`);
-    if (!res.ok) throw new Error(`Binance exchangeInfo ${res.status}`);
-    const data = await res.json();
-    return (data.symbols as { symbol: string; status: string; quoteAsset: string }[])
-      .filter((s) => s.status === "TRADING" && s.quoteAsset === "USDT")
-      .map((s) => s.symbol);
+    // Use ticker/price — much lighter than exchangeInfo (~50KB vs ~3MB)
+    const res = await fetchWithTimeout(`${BASE}/ticker/price`);
+    if (!res.ok) throw new Error(`Binance ticker/price ${res.status}`);
+    const data: { symbol: string }[] = await res.json();
+    return data
+      .map((t) => t.symbol)
+      .filter(
+        (s) => s.endsWith("USDT") && !EXCLUDE.some((ex) => s.endsWith(ex))
+      );
   },
 
   async fetchRecentCandles(symbol: string, count = 5): Promise<NormalizedCandle[]> {
-    const limit = count + 2;
-    const res = await fetch(
-      `${BASE}/klines?symbol=${symbol}&interval=5m&limit=${limit}`
+    const res = await fetchWithTimeout(
+      `${BASE}/klines?symbol=${symbol}&interval=5m&limit=${count + 2}`
     );
     if (!res.ok) throw new Error(`Binance klines ${res.status}`);
-    const raw: [number, string, string, string, string, string, number, ...unknown[]][] = await res.json();
+    const raw: [number, string, string, string, string, string, number, ...unknown[]][] =
+      await res.json();
     const now = Date.now();
     const completed = raw.filter(([, , , , , , closeTime]) => closeTime < now - 10_000);
     return completed.slice(-count).map(([openTime, open, high, low, close, volume, closeTime]) => ({
